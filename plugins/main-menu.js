@@ -244,32 +244,176 @@ export async function handleListSelection(client, m, selectedId) {
   }  else if (selectedId.startsWith('cmd_')) {
     // Execute the command
     const cmdName = selectedId.replace('cmd_', '')
-    const cmdData = global.comandos.get(cmdName)
-    
-    if (cmdData) {
-      try {
-        // Show loading indicator
-        await m.react('⏳')
-        await cmdData.run(client, m, [], cmdName, "")
-        await m.react('✅')
-        
-        // Save to recent commands
-        const userData = global.db.data.users[m.sender] ||= {}
-        userData.recentCommands = userData.recentCommands || []
-        userData.recentCommands = [cmdName, ...userData.recentCommands.filter(c => c !== cmdName)].slice(0, 10)
-        
-      } catch (err) {
-        console.error(err)
-        await client.sendMessage(m.chat, { text: `❌ Error: ${err.message}` }, { quoted: m })
-        await m.react('❌')
-      }
-    } else {
-      await client.sendMessage(m.chat, { text: `❌ Command .${cmdName} not found!` }, { quoted: m })
-    }
-  }
+import fetch from 'node-fetch';
+import { getDevice } from '@whiskeysockets/baileys';
+import fs from 'fs';
+import axios from 'axios';
+import moment from 'moment-timezone';
+
+// Helper function to get RAM usage
+function getRamUsage() {
+  const used = process.memoryUsage();
+  const heapUsed = (used.heapUsed / 1024 / 1024).toFixed(2);
+  const heapTotal = (used.heapTotal / 1024 / 1024).toFixed(2);
+  return `${heapUsed}MB/${heapTotal}MB`;
 }
 
+async function loadCommandsByCategory() {
+  const pluginsPath = new URL('.', import.meta.url);
+  const files = fs.readdirSync(pluginsPath).filter(f => f.endsWith('.js'));
+  const categories = {};
+
+  for (const file of files) {
+    try {
+      const plugin = (await import(`./${file}?update=${Date.now()}`)).default;
+      if (!plugin || !plugin.command) continue;
+      const cmds = Array.isArray(plugin.command) ? plugin.command : [plugin.command];
+      const cat = (plugin.category || 'others').toLowerCase();
+      if (!categories[cat]) categories[cat] = new Set();
+      cmds.forEach(c => { if (typeof c === 'string') categories[cat].add(c); });
+    } catch (e) {}
+  }
+  return categories;
+}
+
+export default {
+  command: ['allmenu', 'help', 'menu'],
+  category: 'info',
+
+  run: async (client, m, args) => {
+    try {
+      const tiempo = moment.tz('Asia/Karachi').format('DD MMM YYYY');
+      const tiempo2 = moment.tz('Asia/Karachi').format('hh:mm A');
+      const botId = client?.user?.id.split(':')[0] + '@s.whatsapp.net' || '';
+      const botSettings = global.db?.data?.settings?.[botId] || {};
+      const botname = botSettings.namebot || '';
+      const botname2 = botSettings.namebot2 || '';
+      const banner = botSettings.banner || '';
+      const owner = botSettings.owner || '';
+      const canalId = botSettings.id || '120363423640651952@newsletter';
+      const canalName = botSettings.nameid || 'Achakzai 04';
+      const isOficialBot = botId === global.client?.user?.id.split(':')[0] + '@s.whatsapp.net';
+      const botType = isOficialBot ? 'Ofc (Owner)' : botSettings.botprem ? 'Premium' : botSettings.botmod ? 'Principal (Mod)' : 'Sub Bot';
+      const users = Object.keys(global.db?.data?.users || {}).length.toLocaleString() || '0';
+      const device = getDevice(m.key.id);
+      const sender = global.db?.data?.users?.[m.sender]?.name || m.pushName || 'User';
+      const uptime = client.uptime ? formatMs(Date.now() - client.uptime) : 'Unknown';
+      const ram = getRamUsage();
+      const commandMap = await loadCommandsByCategory();
+
+      const categoryNames = {
+        ai: '🤖 AI COMMANDS',
+        downloads: '📥 DOWNLOAD COMMANDS',
+        search: '🔍 SEARCH COMMANDS',
+        groups: '⚙️ GROUP COMMANDS',
+        utils: '🛠️ UTILS COMMANDS',
+        owner: '👑 OWNER COMMANDS',
+        info: 'ℹ️ INFO COMMANDS',
+        fun: '🎮 FUN COMMANDS',
+        nsfw: '🔞 NSFW COMMANDS',
+        sticker: '🎴 STICKER COMMANDS',
+        converter: '🔄 CONVERTER COMMANDS',
+        game: '🎲 GAME COMMANDS',
+        education: '📚 EDUCATION COMMANDS'
+      };
+
+      // Main menu text
+      const mainMenuText = `
+✧ 💠 *𝘞𝘌𝘓𝘓𝘊𝘖𝘔𝘌, ${sender}!* 💠 ✧
+
+   *💠𝘈𝘊𝘏𝘈𝘒𝘡𝘈𝘐 04 𝘔𝘌𝘕𝘜 𝘊𝘔𝘋 𝘓𝘐𝘚𝘛💠*
+╭•👤 *ᴜsᴇʀ:* ${sender} 
+│•🤖 *ʙᴏᴛ:* ${botType}
+│•🕒 *ᴛɪᴍᴇ:* ${tiempo2}
+│•📅 *ᴅᴀᴛᴇ:* ${tiempo}
+│•⏳ *ᴀᴄᴛɪᴠᴇ:* ${uptime}
+│•👥 *ᴜsᴇʀs:* ${users}
+│•💾 *ʀᴀᴍ:* ${ram}
+╰•📱 *ᴅᴇᴠɪᴄᴇ:* ${device}
+`.trim();
+
+      // Build interactive list sections for all categories
+      const categorySections = [];
+
+      for (const [cat, cmds] of Object.entries(commandMap)) {
+        const categoryTitle = categoryNames[cat] || `🔰 ${cat.toUpperCase()}`;
+        const sortedCmds = [...cmds].sort();
+
+        // Group commands into rows
+        const rows = sortedCmds.map(cmd => ({
+          id: `cmd_${cmd}`,
+          title: `.${cmd}`,
+          description: `Execute ${cmd} command`
+        }));
+
+        if (rows.length > 0) {
+          categorySections.push({
+            title: `${categoryTitle} (${sortedCmds.length} commands)`,
+            rows: rows
+          });
+        }
+      }
+
+      // Add a category for recently used commands if user has history
+      const userData = global.db.data.users[m.sender] || {};
+      const recentCommands = userData.recentCommands || [];
+
+      if (recentCommands.length > 0) {
+        const recentRows = recentCommands.slice(0, 5).map(cmd => ({
+          id: `cmd_${cmd}`,
+          title: `.${cmd}`,
+          description: 'Run this command again'
+        }));
+
+        categorySections.unshift({
+          title: '🕐 RECENT COMMANDS',
+          rows: recentRows
+        });
+      }
+
+      // Try to send interactive menu
+      try {
+        await client.sendMessage(m.chat, {
+          text: mainMenuText + '\n\n📋 Use .cmdlist to see all commands'
+        }, { quoted: m });
+        
+        // Optional: Send categories list
+        let categoryList = '*📋 COMMAND CATEGORIES*\n\n';
+        for (const [cat, cmds] of Object.entries(commandMap)) {
+          const categoryTitle = categoryNames[cat] || cat.toUpperCase();
+          categoryList += `• ${categoryTitle}: ${cmds.size} commands\n`;
+        }
+        categoryList += '\n> Use .menu or .help <command> for details';
+        
+        await client.sendMessage(m.chat, {
+          text: categoryList
+        }, { quoted: m });
+        
+      } catch (error) {
+        console.error('Menu error:', error);
+        // Ultimate fallback: Send simple text menu
+        let simpleMenu = `*𝘈𝘊𝘏𝘈𝘒𝘡𝘈𝘐 04*\n\n𝘞𝘦𝘭𝘭𝘤𝘰𝘮𝘦 ${sender}!\n\n`;
+        for (const [cat, cmds] of Object.entries(commandMap)) {
+          const categoryTitle = categoryNames[cat] || cat.toUpperCase();
+          simpleMenu += `\n*${categoryTitle}*\n`;
+          simpleMenu += [...cmds].sort().map(c => `.${c}`).join(', ');
+          simpleMenu += '\n';
+        }
+        await m.reply(simpleMenu);
+      }
+
+    } catch (e) {
+      console.error(e);
+      await m.reply('❌ Error loading menu. Please try again later.');
+    }
+  }
+};
+
+// Format milliseconds to readable time
 function formatMs(ms) {
-  const s = Math.floor(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24)
-  return [`${d ? `${d}d` : ''}`, `${h % 24}h`, `${m % 60}m`, `${s % 60}s`].filter(Boolean).join(' ')
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const d = Math.floor(h / 24);
+  return [`${d ? `${d}d` : ''}`, `${h % 24}h`, `${m % 60}m`, `${s % 60}s`].filter(Boolean).join(' ');
 }
